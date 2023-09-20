@@ -1,0 +1,206 @@
+---
+title: "Project 2 Econ 104"
+author: "Cal Parker and Gabrielle Martin"
+date: "2022-10-30"
+output: pdf_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(tidyverse)
+library(devtools)
+library(DataExplorer)
+library(forecast)
+library(tseries)
+library(AER)
+library(car)
+library(stargazer)
+library(dynlm)
+library(forecast)
+library(stats)
+library(knitr)
+library(sandwich)
+
+```
+
+```{r}
+
+climate_theme <- function() {
+  theme_bw() + 
+    theme(
+      plot.title = element_text(hjust = 0.5, size = 18),
+      strip.text = element_text(size = 12, color = "white"),
+      strip.background = element_rect(fill = "#17468F")
+    )
+}
+daily_climate <- read_csv("DailyDelhiClimateTrain.csv")
+```
+### Our data set contains four years of climate data from New Dehli, India. The predictor variables are mean pressure, wind  speed, humidity, and date. The dependent variable is mean temperature. 
+
+### Now we will take a look at the proportions of missing values in the data.
+```{r Missingness_Plot}
+plot_missing(daily_climate, ggtheme = climate_theme(), title = "Missingness Plot of Daily Climate")
+```
+### As seen in the plot of missingness, there appears to be no missing data. After running the plot_missing command, we are able to see that there are no missing values for each of the columns. 
+```{r Histogram}
+daily_climate %>%
+mutate(n = row_number()) %>%
+pivot_longer(-c(date, n), names_to = "metric", values_to = "value") %>%
+ggplot(aes(x = value, n = n)) +
+geom_histogram() +
+  geom_density(aes(y = ..density..*n)) +
+  facet_wrap(~ metric, scales = "free") +
+  climate_theme()
+```
+### With the histograms, we can see that humidity has a slightly right skewed, but pretty normal distribution (centered around a mean of high 60s-70). The histogram of mean pressure demonstartes what we already know about barometric pressure: it is pretty constant year round (at a value of about 1500). Mean Temperature experienced the most variation, peaking in the early 30s. The histogram of wind speed was very left skewed. From 10-20, there was a relatively sharp, but gradual decrease in wind speed. In mean temp, with our density curve, we see that that it might be bimodal. There are two clusters of temperatures that may occur cyclically. This usually indicates seasonality in time series data. 
+```{r Five_Number_Summary}
+daily_climate %>%
+  select(-date) %>%
+  summarise(across(everything(), fivenum)) %>%
+  mutate(metric = c("min", "25-pctile", "median", "75-pctile", "max")) %>%
+  relocate(metric)
+```
+### Here, we see that the range for pressure is high, but most of the time it stays around its median of 1009. 
+```{r Correlation_Plot}
+daily_climate %>%
+  select(where(is.numeric)) %>%
+  plot_correlation(
+    ggtheme = climate_theme(),
+    title = "Correlation <- Plot of Daily Climate"
+  )
+```
+### There appears to be moderate negative correlation between humidity and mean temp. There are slight correlations between wind speed and humidity (negative), as well as, wind speed and mean temp (positive). There is no other meaningful correlation between variables. 
+```{r Time_Series_Mean_Temp}
+ggtsdisplay(
+  daily_climate$meantemp,
+  theme = climate_theme(),
+  main = "Time Series Plot of Mean Temperature"
+) 
+```
+### Then, we graphed the Time Series Plot for Mean Temperature. This plot is cyclical (shows seasonality). By looking at the PACF, we see that there are significant lags at 1,2, 3, and 4. By looking at our ACF, there seems to be non-stationarity. There is a decreasing slope in the ACF, which is a sign of non-stationarity. This suggests that there is not a trend in the data; our data does not stay in the same range. 
+```{r Time_Series_Humidity}
+ggtsdisplay(
+  daily_climate$humidity,
+  theme = climate_theme(),
+  main = "Time Series Plot of Humidity"
+) 
+```
+### We next graphed the Time Series Plot of Humidity. The low points of our graph appear to be regular, indicating seasonality. By looking at our PACF, we see that there are lags at 1, 3, 4, 5, 6, and 16. At 1, we have our "strongest" indication of a lag. Similar to mean temperature, the ACF exhibits a negative slope, suggesting non-stationarity. 
+```{r Time_Series_Wind_Speed}
+ggtsdisplay(
+  daily_climate$wind_speed,
+  theme = climate_theme(),
+  main = "Time Series Plot of Wind Speed"
+) 
+```
+### Wind Speed has less clear, but still present seasonality. By looking at our ACF, there appears to be stationarity. There is no clear trend up or down in the ACF, menaing that there is not a clear relationship between the lags. In the PACF, there are lags at 1, 3, and 20. The strongest indication of a lag is at one. 
+```{r Time_Series_Mean_Pressure}
+ggtsdisplay(
+  daily_climate$meanpressure,
+  theme = climate_theme(),
+  main = "Time Series Plot of Mean Pressue"
+) 
+```
+### This Time Series Plot of Mean Pressure is the most difficult to read. This is because we have a strong outlier at about 1200. That being said, we cannot properly evaluate the ACF and the PACF. 
+### Now, we will be doing the Unit-Root test for Mean Temperature. This will test for stationarity. 
+```{r Unit_Root_Mean_Temp}
+adf.test(daily_climate$meanpressure) %>% broom::tidy()
+```
+###  Our p-value is less than .01. Our p value was smaller than the printed value (lowest p value our function has). Because our p-value is below .05, we will reject our null hypothesis of non-stationarity. This suggests that there is stationarity. 
+### Now, we will be doing the Unit-Root test for Humidity. This will test for stationarity.
+```{r Unit_Root_Humidity}
+adf.test(daily_climate$humidity) %>% broom::tidy()
+```
+### Our p-value is .02. Because our p-value is below .05, we will reject our null hypothesis of non-stationarity. This suggests that there is stationarity. 
+### This contradicts what we saw in our ACF for humidity, which suggested non-stationarity. 
+```{r Unit_Root_Wind_Speed}
+adf.test(daily_climate$wind_speed) %>% broom::tidy()
+```
+### Here, we will be rejecting our null of non-stationarity once again. Our p-value is lower than the printed value of .01, which is less than .05. This is consistent with what we saw in our ACF.
+```{r Unit_Root_Mean_Pressure}
+adf.test(daily_climate$meanpressure) %>% broom::tidy()
+```
+### Lastly, we did the unit-root test for mean pressure, where we will reject our null of non-stationairty because the p-value is less than our printed value of .01 (which is less than .05). This indicates stationarity for mean pressure. 
+```{r}
+#ndiffs
+daily_climate_ts <- ts(daily_climate)
+summary(daily_climate_ts)
+```
+## When determining which autoregression line was most correctly specified we used the AIC and BIC functions as well as the ACF and PACF plots that were previously introduced. We can see that our ACF chart indicates that we should include the first.
+```{r}
+#AR model
+
+par(mfrow=c(2,2))
+
+aics <- rep(0,20) 
+bics <- rep(0,20) 
+
+y <- daily_climate_ts[,"meantemp"] 
+for (i in 1:20)
+{ 
+  ari <- dynlm(y~L(y,1:i), start=i) 
+  summary(ari)
+}
+
+tble <- data.frame(rbind(aics, bics)) 
+names(tble) <- c(1:20)
+row.names(tble) <- c("AIC","BIC") 
+kable(tble, digits=1, align='c',caption="Lag order for AR model")
+
+areg2 <- dynlm(y~L(y,1)+L(y,2)+L(y,3)+L(y,4)+L(y,5)+L(y,6)+L(y,7)+L(y,8)+L(y,9)+L(y,10)+L(y,11))
+BIC(areg2)
+simul<-arima.sim(areg2, n=1462)
+tsdisplay(simul)
+acf(simul)
+
+
+Box.test(simul, type = "Ljung")
+
+coeffsTest<-coeftest(areg2, vcov = NeweyWest)
+tsdisplay(coeffsTest)
+acf(coeffsTest)
+BIC(coeffsTest)
+
+#ACF of the residuals 
+
+residsBestReg<-areg2$residuals
+acf(residsBestReg)
+
+### Now, we will be running our ARDL model. 
+#ARDL model
+
+library(dynlm)
+library(devtools)
+library(ARDL)
+
+meantemp_ts<-daily_climate_ts[,"meantemp"]
+humidity_ts<- daily_climate_ts[,"humidity"]
+windspeed_ts<- daily_climate_ts[,"wind_speed"]
+meanpressure_ts<- daily_climate_ts[,"meanpressure"]
+date_ts<- daily_climate_ts[,"date"]
+
+mtts<-meantemp_ts[5:length(meantemp_ts)]
+htts<-humidity_ts[5:length(humidity_ts)]
+wsts<-windspeed_ts[5:length(windspeed_ts)]
+mpts<-meanpressure_ts[5:length(meanpressure_ts)]
+dtts<-date_ts[5:length(meanpressure_ts)]
+
+tsreg1 = dynlm(d(meantemp_ts)~L(d(meantemp_ts),2)+
+                 L(d(humidity_ts),2)+
+                 L(d(windspeed_ts),2)+
+                 L(d(meanpressure_ts),2)+
+                 L(d(date_ts),2), data = daily_climate_ts)
+
+coeftest(tsreg1)
+coeftest(tsreg1, vcov. = NeweyWest(tsreg1))
+summary(tsreg1)
+tsreg2<-auto_ardl(meantemp~humidity+meanpressure+wind_speed+date, data=daily_climate, max_order = c(3))
+summary(tsreg2)
+tsreg2$top_orders
+
+```
+##By looking at the t test of coefficients, we see that mean pressure is statistically signiciant, with a p value of .003216 (less than .05 and .01). This means it is statistically significant at the 99% interval. Looking at the coefficents test with the Newey West Correction above, we see that meantemp with two lags is a statistically significant predictor. It is statistically significant at the 99% interval. Our p-value for mean temp is .00322, which is less than .05 and even less than .01. We will therefore be selecting mean temperature and mean pressure for our ARDL(p,q) model. 
+```{r}
+tsreg_final <- auto_ardl(meantemp~meanpressure+date, data=daily_climate, max_order = c(25))
+summary(tsreg_final)
+```
